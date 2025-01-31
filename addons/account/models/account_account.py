@@ -387,6 +387,12 @@ class AccountAccount(models.Model):
             # Need to set record.code with `company = self.env.company`, not `self.env.company.root_id`
             record_root.code_store = record.code
 
+        # Changing the code for one company should also change it for all the companies which share the same root_id.
+        # The simplest way of achieving this is invalidating it for all companies here.
+        # We re-compute it right away for the active company, as it is used by constraints while `code` is still protected.
+        self.invalidate_recordset(fnames=['code'], flush=False)
+        self._compute_code()
+
     @api.depends_context('company')
     @api.depends('code')
     def _compute_placeholder_code(self):
@@ -801,10 +807,9 @@ class AccountAccount(models.Model):
             not name
             and (partner := self.env.context.get('partner_id'))
             and (move_type := self._context.get('move_type'))
+            and (ordered_accounts := self._order_accounts_by_frequency_for_partner(self.env.company.id, partner, move_type))
         ):
-            ids = self._order_accounts_by_frequency_for_partner(
-                self.env.company.id, partner, move_type)
-            records = self.sudo().browse(ids)
+            records = self.sudo().browse(ordered_accounts)
             records.fetch(['display_name'])
             return [(record.id, record.display_name) for record in records]
         return super().name_search(name, args, operator, limit)

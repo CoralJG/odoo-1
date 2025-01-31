@@ -100,6 +100,21 @@ async function fetchInternalMetaData(url) {
     return result;
 }
 
+async function fetchAttachmentMetaData(url, ormService) {
+    try {
+        const urlParsed = new URL(url, window.location.origin);
+        const attachementId = parseInt(urlParsed.pathname.split("/").pop());
+        const [{ name, mimetype }] = await ormService.read(
+            "ir.attachment",
+            [attachementId],
+            ["name", "mimetype"]
+        );
+        return { name, mimetype };
+    } catch {
+        return { name: url, mimetype: undefined };
+    }
+}
+
 /**
  * @typedef { Object } LinkShared
  * @property { LinkPlugin['createLink'] } createLink
@@ -120,6 +135,13 @@ export class LinkPlugin extends Plugin {
                 description: _t("Add a link"),
                 icon: "fa-link",
                 run: this.toggleLinkTools.bind(this),
+            },
+            {
+                id: "toggleLinkToolsButton",
+                title: _t("Button"),
+                description: _t("Add a button"),
+                icon: "fa-link",
+                run: this.toggleLinkTools.bind(this, { type: "primary" }),
             },
             {
                 id: "removeLinkFromSelection",
@@ -169,7 +191,7 @@ export class LinkPlugin extends Plugin {
                 title: _t("Button"),
                 description: _t("Add a button"),
                 categoryId: "navigation",
-                commandId: "toggleLinkTools",
+                commandId: "toggleLinkToolsButton",
             },
         ],
 
@@ -216,6 +238,9 @@ export class LinkPlugin extends Plugin {
 
         this.getExternalMetaData = memoize(fetchExternalMetaData);
         this.getInternalMetaData = memoize(fetchInternalMetaData);
+        this.getAttachmentMetadata = memoize((url) =>
+            fetchAttachmentMetaData(url, this.services.orm)
+        );
     }
 
     destroy() {
@@ -283,11 +308,12 @@ export class LinkPlugin extends Plugin {
      * @param {Object} options
      * @param {HTMLElement} options.link
      */
-    toggleLinkTools({ link } = {}) {
+    toggleLinkTools({ link, type } = {}) {
         if (!link) {
             link = this.getOrCreateLink();
         }
         this.linkElement = link;
+        this.type = type;
     }
 
     normalizeLink() {
@@ -318,6 +344,9 @@ export class LinkPlugin extends Plugin {
             },
             getInternalMetaData: this.getInternalMetaData,
             getExternalMetaData: this.getExternalMetaData,
+            getAttachmentMetadata: this.getAttachmentMetadata,
+            recordInfo: this.config.getRecordInfo?.() || {},
+            type: this.type || "",
         };
         if (!selectionData.documentSelectionIsInEditable) {
             // note that data-prevent-closing-overlay also used in color picker but link popover
@@ -405,6 +434,9 @@ export class LinkPlugin extends Plugin {
                     this.removeCurrentLinkIfEmtpy();
                     this.dependencies.history.addStep();
                 },
+                canEdit: !this.linkElement.classList.contains("o_link_readonly"),
+                canUpload: !this.config.disableFile,
+                onUpload: this.config.onAttachmentChange,
             };
 
             if (linkEl.isConnected) {
@@ -473,7 +505,8 @@ export class LinkPlugin extends Plugin {
         if (
             this.linkElement &&
             cleanZWChars(this.linkElement.innerText) === "" &&
-            !this.linkElement.querySelector("img")
+            !this.linkElement.querySelector("img") &&
+            this.linkElement.parentElement?.isContentEditable
         ) {
             this.linkElement.remove();
         }
@@ -588,7 +621,7 @@ export class LinkPlugin extends Plugin {
             const attributes = [...link.attributes].filter(
                 (a) => !["style", "href", "class"].includes(a.name)
             );
-            if (!classes.length && !attributes.length) {
+            if (!classes.length && !attributes.length && link.parentElement.isContentEditable) {
                 link.remove();
             }
         }
